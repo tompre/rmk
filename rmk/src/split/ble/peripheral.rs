@@ -1,5 +1,6 @@
-use bt_hci::cmd::le::LeSetPhy;
-use bt_hci::controller::ControllerCmdAsync;
+
+#[cfg(feature = "subrating")]
+use bt_hci::{cmd::le::LeSetHostFeature, controller::ControllerCmdSync};
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use rmk_types::connection::ConnectionStatus;
@@ -130,7 +131,12 @@ impl<'stack, 'server, 'c, P: PacketPool> SplitWriter for BleSplitPeripheralDrive
 /// * `id` - The id of the peripheral
 /// * `central_addr` - The address of the central
 /// * `stack` - The stack to use
-pub async fn initialize_nrf_ble_split_peripheral_and_run<'b, 's: 'b, C: Controller + ControllerCmdAsync<LeSetPhy>>(
+pub async fn initialize_nrf_ble_split_peripheral_and_run<
+    'b,
+    's: 'b,
+    #[cfg(feature = "subrating")] C: Controller + ControllerCmdSync<LeSetHostFeature>,
+    #[cfg(not(feature = "subrating"))] C: Controller,
+>(
     id: usize,
     stack: &'b Stack<'s, C, DefaultPacketPool>,
 ) {
@@ -146,6 +152,16 @@ pub async fn initialize_nrf_ble_split_peripheral_and_run<'b, 's: 'b, C: Controll
         .map(|a| a.address);
 
     let peri_task = async {
+        // Set subrating host support before any advertising/connecting
+        #[cfg(feature = "subrating")]
+        {
+            const CONN_SUBRATING_HOST_BIT: u8 = 38;
+            let cmd = LeSetHostFeature::new(CONN_SUBRATING_HOST_BIT, 1);
+            if let Err(e) = stack.command(cmd).await {
+                error!("[Host] error setting subrating host feature flag: {:?}", e);
+            }
+        }
+
         let server = BleSplitPeripheralServer::new_default("rmk").unwrap();
         loop {
             update_status(|c| *c = ConnectionStatus::new());
